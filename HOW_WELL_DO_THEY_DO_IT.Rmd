@@ -1,0 +1,225 @@
+---
+title: "Predict how well they do it"
+author: "Marc van Leeuwen"
+date: "7 januari 2017"
+output: pdf_document
+---
+
+### Synopsys
+The goal of this project is to predict the manner in which an exercise is done. 
+This is the "classe" variable in the training set. 
+The trainingset contains 19622 rows and 160 variables per row. The classe must be predicted using any of the 160 variables. 
+In this report I shall describe how I schoose my model, how I used cross validation and what I think the expected out of sample error is.  
+At the end I will use my prediction model to predict 20 different test cases. 
+
+### prerequisites
+
+For this assignment I only loaded the caret package. While working with caret, other packages will be loaded when necessary. 
+```{r, echo=TRUE,collapse=TRUE}
+rm(list=ls())
+library(caret)
+```
+
+### Getting the DATA
+
+The data is downloaded from the internet and read in 2 matrices: 
+trainingset and testset. 
+
+```{r, echo=TRUE, cache=TRUE,collapse=TRUE}
+setwd("C:/Users/Marc/Documents/R_Working_dir/Practical Machine Learning/Eindopdracht")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv","pml-training.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv","pml-testing.csv")
+trainingset<-read.csv("pml-training.csv")
+testset<-read.csv("pml-testing.csv")
+```
+
+### Investicate the data 
+
+During investication of the data I saw that most of the columns contained no data 
+or contained empty strings.  
+I also saw that classe is a factor variable with 5 factors A B C D and E 
+
+```{r, echo=TRUE, cache=TRUE,collapse=TRUE}
+dim(trainingset)
+names(which(colMeans(is.na(trainingset)) > 0.5))
+names(which(colMeans(trainingset=="") > 0.5))
+table(trainingset$classe)
+
+```
+
+### Cleaning the DATA
+
+Because most of the columuns contained no data or contained empty strings I desided to make a copy of the training data and test data in which these columns are left out.  
+These cleaned datasets are called trainingwork and testsetwork.  
+The first 7 columns only consist descriptive data. I will not use these columns either. 
+
+```{r, echo=TRUE, cache=TRUE,collapse=TRUE}
+trainingnona<-trainingset[,which(colMeans(is.na(trainingset)) < 0.5)]
+trainingwork<-trainingnona[,which(colMeans(trainingnona=="") < 0.5)]
+testsetwork<-testset[,colnames(trainingwork)[-length(colnames(trainingwork))]]
+```
+
+### Creating Training and test setlists
+
+In order to prevent Overfitting, to do cross validation and because of the limitations of my computer I made different trainingsets and testsets. 
+I generated:  
+10 training sets containing 10% of the data  
+10 tuningsets containing 3% of the data  
+20 testsets containg 3% of the data  
+I would have liked to use bigger training sets, but my competer was not strong enough to handle these sizes.
+
+```{r, echo=TRUE, cache=TRUE,collapse=TRUE}
+set.seed(32323)
+traininglist <- createDataPartition(y=trainingwork$classe,
+                                    times=10,p=0.1,list=TRUE)
+testinglist <- createDataPartition(y=trainingwork$classe,
+                                   times=10,p=0.03,list=TRUE)
+traininglisttune <- createDataPartition(y=trainingwork$classe,
+                                    times=10,p=0.03,list=TRUE)
+testinglisttune <- createDataPartition(y=trainingwork$classe,
+                                   times=10,p=0.03,list=TRUE)
+
+training<-trainingwork[traininglist[[1]],]
+testing<-trainingwork[testinglist[[1]],]
+```
+
+### Choosing the best model
+
+Before I choose the model, I wanted to know more about the correlation between the varibles. I found that there are several variables with a high correlation. 
+When I do preprocessing with PCA I only needed 26 of the 52 variables. So using PCA was one of my options. 
+
+```{r, echo=TRUE,collapse=TRUE}
+dim(training)
+M <- abs(cor(training[,c(-60,-7,-6,-5,-4,-3,-2,-1)]))
+diag(M) <- 0
+which(M > 0.9,arr.ind=T)
+
+preProc <- preProcess(training[,c(-60,-7,-6,-5,-4,-3,-2,-1)],method="pca")
+preProc
+
+```
+
+Because Classe is a factor variable with 5 factors I used decision based models and a Linear Discriminant Analysis model.  
+I started with the basic settings to see which model was best.  
+I used:  
+Classification tree: method=rpart  
+Classification tree with pca: method=rpart and preProcess=pca  
+Random Forrest: method=rf  
+Generalized Boosted Model with pca: method=gbm and preProcess=pca  
+Linear Discriminant Analysis: method=lda and preProcess=pca  
+
+```{r, echo=TRUE, cache=TRUE,collapse=TRUE}
+set.seed(225)
+
+
+modFitrpart   <-train(classe ~ ., method="rpart",data=training[,c(-7:-1)])
+modFitrpartpca<-train(classe ~ ., method="rpart",
+                      preProcess="pca",data=training[,c(-7:-1)])
+modFitrf      <-train(classe ~ ., method="rf",
+                      data=training[,c(-7:-1)])
+modFitgbmpca  <-train(classe ~ .,method="gbm",
+                      preProcess="pca",verbose=FALSE,data=training[,c(-7:-1)])
+modFitlda     <-train(classe ~ .,method="lda",
+                       preProcess="pca",verbose=FALSE,data=training[,c(-7:-1)])
+
+predictrpart<-predict(modFitrpart,testing[,c(-7:-1)])
+predictrpartpca<-predict(modFitrpartpca,testing[,c(-7:-1)])
+predictrf<-predict(modFitrf,testing[,c(-7:-1)])
+predictgbmpca<-predict(modFitgbmpca,testing[,c(-7:-1)])
+predictlda<-predict(modFitlda,testing[,c(-7:-1)])
+
+confusionMatrix(predictrpart,testing$classe)$overal['Accuracy']
+confusionMatrix(predictrpartpca,testing$classe)$overal['Accuracy']
+confusionMatrix(predictrf,testing$classe)$overal['Accuracy']
+confusionMatrix(predictgbmpca,testing$classe)$overal['Accuracy']
+confusionMatrix(predictlda,testing$classe)$overal['Accuracy']
+```
+
+The Random Forest model had by far the best accuracy (94,8%) on the testing data (out of sample error was the smalest),  so I decided to take this model. 
+
+### Tuning the model 
+
+I did some basic tuning on the random Forest model.  
+I looked at 2 parameters:  
+mtry: Number of variables randomly sampled as candidates at each split.  
+ntree: Number of trees to grow.  
+
+To prevent overfitting and because of performance limitations I used new and smaller training and testset. 
+
+
+```{r, echo=TRUE, cache=TRUE,collapse=TRUE,fig.ext='png',fig.path='./figures/'}
+training<-trainingwork[traininglisttune[[1]],]
+testing<-trainingwork[testinglisttune[[1]],]
+
+set.seed(1333)
+modFitrf<-train(classe ~ ., method="rf",data=training[,c(-7:-1)])
+predictrf2<-predict(modFitrf,testing[,c(-7:-1)])
+confusionMatrix(predictrf2,testing$classe)$overal['Accuracy']
+
+set.seed(1333)
+tunegrid <- expand.grid(.mtry=c(2,4,6,8,10,14,18,27,33,40))
+Tune_modFitrf<-train(classe ~ ., method="rf",data=training[,c(-7:-1)],tuneGrid=tunegrid)
+plot(Tune_modFitrf)
+```
+
+When mtry=6 I get the best Accuracy on the testset, so I will take mtry 6.  
+Now I will look which number of trees gives the best Accuracy.  
+To prevent overfitting and because of performance limitations I used new and smaller training and testset. 
+
+```{r, echo=TRUE, cache=TRUE,collapse=TRUE}
+tunegrid <- expand.grid(.mtry=6)
+
+training<-trainingwork[traininglisttune[[2]],]
+testing<-trainingwork[testinglisttune[[2]],]
+
+set.seed(1333)
+tune_modFitrf300<-train(classe ~ ., method="rf",data=training[,c(-7:-1)],tuneGrid=tunegrid,ntree=300)
+predictrf300<-predict(tune_modFitrf300,testing[,c(-7:-1)])
+confusionMatrix(predictrf300,testing$classe)$overal['Accuracy']
+
+set.seed(1333)
+tune_modFitrf500<-train(classe ~ ., method="rf",data=training[,c(-7:-1)],tuneGrid=tunegrid,ntree=500)
+predictrf500<-predict(tune_modFitrf500,testing[,c(-7:-1)])
+confusionMatrix(predictrf500,testing$classe)$overal['Accuracy']
+
+set.seed(1333)
+tune_modFitrf700<-train(classe ~ ., method="rf",data=training[,c(-7:-1)],tuneGrid=tunegrid,ntree=700)
+predictrf700<-predict(tune_modFitrf700,testing[,c(-7:-1)])
+confusionMatrix(predictrf700,testing$classe)$overal['Accuracy']
+
+set.seed(1333)
+tune_modFitrf900<-train(classe ~ ., method="rf",data=training[,c(-7:-1)],tuneGrid=tunegrid,ntree=900)
+predictrf900<-predict(tune_modFitrf900,testing[,c(-7:-1)])
+confusionMatrix(predictrf900,testing$classe)$overal['Accuracy']
+
+```
+
+I get the best accuracy with ntree=700 (89.5%) on the testing data (out of sample error was the smalest),  so I decided to take ntree=700. 
+
+### The Final Model
+
+The final model is a random forest with mtry=6 and ntree=700.
+To prevent overfitting I used a new training and data set. 
+
+```{r, echo=TRUE, cache=TRUE,collapse=TRUE}
+training<-trainingwork[traininglist[[2]],]
+testing<-trainingwork[testinglist[[2]],]
+tunegrid <- expand.grid(.mtry=6)
+ntree<-700
+
+set.seed(1333)
+modFitrfFinal<-train(classe ~ ., method="rf",data=training[,c(-7:-1)],tuneGrid=tunegrid,ntree=ntree)
+predictrfFinal<-predict(modFitrfFinal,testing[,c(-7:-1)])
+confusionMatrix(predictrfFinal,testing$classe)$overal['Accuracy']
+
+```
+
+
+### The prediction of classe on the testset
+
+
+```{r, echo=TRUE, cache=TRUE,collapse=TRUE}
+predictrf_test<-predict(modFitrfFinal,testsetwork[,c(-7:-1)])
+predictrf_test
+```
+
